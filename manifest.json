@@ -13,13 +13,12 @@
   },
   "options_page": "src/options/options.html",
   "permissions": ["storage", "activeTab", "scripting"],
-  "host_permissions": ["https://*.pinduoduo.com/*", "https://pinduoduo.com/*"],
+  "host_permissions": ["https://mms.pinduoduo.com/print/goods-setting*"],
   "content_scripts": [
     {
-      "matches": ["https://*.pinduoduo.com/*", "https://pinduoduo.com/*"],
+      "matches": ["https://mms.pinduoduo.com/print/goods-setting*"],
       "js": ["src/content.js"],
       "run_at": "document_idle"
     }
   ]
 }
-

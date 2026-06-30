@@ -20,7 +20,7 @@
 
 ## 下一步建议
 
+- 目前插件仅对 `https://mms.pinduoduo.com/print/goods-setting` 生效（见 `manifest.json` 的 `matches`）
 - 明确拼多多后台使用的域名与页面路径（商品编辑页/发货页）
 - 在 `content.js` 中识别关键表单字段并抽取/回填数据
 - 用 `chrome.scripting` 在当前 Tab 执行更复杂的 DOM 操作
-
