@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "PDD Goods Assistant",
   "version": "0.1.0",
-  "description": "管理拼多多商品信息编辑与发货辅助（基础脚手架）",
+  "description": "拼多多商品信息编辑助理",
   "action": {
-    "default_title": "PDD 助手",
+    "default_title": "PDD商品编辑助手",
     "default_popup": "src/popup/popup.html"
   },
   "background": {
@@ -19,6 +19,12 @@
       "matches": ["https://mms.pinduoduo.com/print/goods-setting*"],
       "js": ["src/content.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/pdd.png"],
+      "matches": ["https://mms.pinduoduo.com/*"]
     }
   ]
 }
