@@ -15,9 +15,12 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
   const STYLE_ID = "pdd-ga-style";
   const SAVE_TIPS_ID = "pdd-ga-save-tips";
   const PANEL_ICON_URL = chrome.runtime.getURL("src/pdd.png");
+  const LOG_MAX_LINES = 300;
 
   let runState = "idle"; // idle | running | paused | stopped
   let currentJob = null;
+  const logBuffer = [];
+  let logRenderPending = false;
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -339,20 +342,33 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     });
   }
 
+  function scheduleLogRender() {
+    if (logRenderPending) return;
+    logRenderPending = true;
+    requestAnimationFrame(() => {
+      logRenderPending = false;
+      ensurePanel();
+      const el = document.getElementById("pdd-ga-log");
+      if (!el) return;
+      // 固定上限，避免日志无限增长导致越来越卡
+      el.textContent = logBuffer.join("\n");
+    });
+  }
+
   function logLine(line) {
-    ensurePanel();
-    const el = document.getElementById("pdd-ga-log");
     const now = new Date();
     const stamp = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(
       now.getSeconds()
     ).padStart(2, "0")}`;
-    el.textContent = `[${stamp}] ${line}\n` + (el.textContent || "");
+    // 仍保持“最新在最上面”的体验
+    logBuffer.unshift(`[${stamp}] ${line}`);
+    if (logBuffer.length > LOG_MAX_LINES) logBuffer.length = LOG_MAX_LINES;
+    scheduleLogRender();
   }
 
   function clearLog() {
-    ensurePanel();
-    const el = document.getElementById("pdd-ga-log");
-    if (el) el.textContent = "";
+    logBuffer.length = 0;
+    scheduleLogRender();
   }
 
   function updateActionButtons() {
@@ -496,6 +512,8 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
         (!beforePage && beforeFirstGoodsId && afterFirstGoodsId && afterFirstGoodsId !== beforeFirstGoodsId)
       ) {
         logLine(`翻页完成：${beforePage ?? "?"} -> ${afterPage ?? "?"}`);
+        // 翻页后先把滚动条拉回顶部，避免列表异步渲染导致只加载到中间/底部
+        await scrollListToTop();
         return true;
       }
     }
@@ -519,12 +537,21 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
       .trim();
   }
 
+  const SHOE_ATTR_WORDS = ["网面", "皮面", "革面", "加绒", "加棉", "加厚"];
+
   function normalizeBracketText(s) {
-    return String(s ?? "")
-      // 保留括号内的词，只去掉括号本身：蓝色【网面】31 -> 蓝色网面31
-      .replace(/[【\[]([^】\]]+)[】\]]/g, "$1")
-      // 圆括号里的内容大多是补充说明/营销词，仍然去掉
-      .replace(/[\(（][^\)）]*[\)）]/g, "");
+    return (
+      String(s ?? "")
+        // 保留括号内的词，只去掉括号本身：蓝色【网面】31 -> 蓝色网面31
+        .replace(/[【\[]([^】\]]+)[】\]]/g, "$1")
+        // 圆括号：如果包含鞋子关键属性，则保留内容；否则认为是补充说明/营销词，去掉
+        .replace(/[\(（]([^\)）]*)[\)）]/g, (_m, inner) => {
+          const txt = String(inner ?? "").trim();
+          if (!txt) return "";
+          const keep = SHOE_ATTR_WORDS.some((w) => txt.includes(w));
+          return keep ? txt : "";
+        })
+    );
   }
 
   const KNOWN_COLORS = [
@@ -564,12 +591,35 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
 
   const PROMO_SUFFIX_TRASH = [
     "六一活动专属",
+    "高品质材料款",
     "舒适透气款",
     "传统材料款",
+    "传统面料款",
+    "优质面料款",
+    "优质材料款",
+    "金典面料款",
+    "经典面料款",
     "精品材料款",
+    "宝妈优选",
     "//升级版//",
     "店长推荐",
     "革新面料款",
+    "精选材料款",
+    "精选面料款",
+    "臻选面料款",
+    "普通面料款",
+    "常规面料款",
+    "甄选材料",
+    "升级专柜版",
+    "臻选材料",
+    "精选材料",
+    "面料款",
+    "精品面料",
+    "精选面料",
+    "专柜版",
+    "更防滑耐磨",
+    "百搭配裙",
+    "传统",
     "材料款",
     "材质款",
     "经典款",
@@ -579,6 +629,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     "潮流款",
     "精选款",
     "专业版",
+    "旗舰版",
     "豪华版",
     "升级版",
     "升级款",
@@ -588,12 +639,14 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     "薄款",
     "普通款",
     "夏季",
+    "臻品",
     "春秋",
     "秋冬",
     "童鞋",
     "儿童",
     "男童",
     "女童",
+    "经典",
     "宝宝",
     "中大童"
   ];
@@ -611,6 +664,12 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
    */
   function extractColorAndSize(specNameLine) {
     const raw = normalizeText(normalizeBracketText(specNameLine));
+    // 提前抓取鞋子属性词，防止后续清理时丢失（例如括号、分隔符等情况）
+    const shoeAttrs = SHOE_ATTR_WORDS
+      .map((w) => ({ w, idx: raw.indexOf(w) }))
+      .filter((x) => x.idx >= 0)
+      .sort((a, b) => a.idx - b.idx)
+      .map((x) => x.w);
 
     // 取尺码：优先找 “整数 + 码”（兼容：绿色 34码内长20.5cm）
     const sizeWithMa = raw.match(/(\d{1,3})\s*码/);
@@ -687,7 +746,13 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     }
 
     // 最终简称优先保留 “颜色+属性”，例如：粉色网面 / 黑色加绒
-    const shortBase = cleaned || color;
+    // 如果清理后不小心只剩颜色，这里把捕获到的鞋子属性补回去
+    let shortBase = cleaned || color;
+    if (shoeAttrs.length) {
+      for (const a of shoeAttrs) {
+        if (!shortBase.includes(a)) shortBase += a;
+      }
+    }
     const isAlphaSize = /^(?:XS|S|M|L|XL|XXL|XXXL|XXXXL|2XL|3XL|4XL|5XL|6XL|均码)$/i.test(size);
     const shortName = size ? `${shortBase}，${size}${isAlphaSize ? "" : "码"}` : `${shortBase}`;
     return { color, size, shortName };
@@ -796,30 +861,48 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     return null;
   }
 
+  async function scrollListToTop() {
+    // 翻页后该页面是异步加载，先把滚动条拉回顶部，有助于触发列表完整渲染
+    const firstRow = getGroupStartRows()[0] ?? null;
+    if (!firstRow) {
+      window.scrollTo(0, 0);
+      await sleep(200);
+      return;
+    }
+    const scrollParent = findScrollableAncestor(firstRow);
+    if (scrollParent) {
+      scrollParent.scrollTop = 0;
+    }
+    window.scrollTo(0, 0);
+    await sleep(300);
+  }
+
   async function revealMoreGoodsInCurrentPage(job) {
     const beforeIds = getVisibleGoodsIds();
     const lastStartRow = getGroupStartRows().slice(-1)[0] ?? null;
     if (!lastStartRow) return false;
 
     const scrollParent = findScrollableAncestor(lastStartRow);
-    const stepBase = scrollParent ? Math.max(320, Math.floor(scrollParent.clientHeight * 0.75)) : 700;
+    // 模拟鼠标滚轮：每次只向下滚一小段；到底后回到顶部，重新从上往下扫
+    const stepBase = scrollParent ? Math.max(120, Math.floor(scrollParent.clientHeight * 0.28)) : 220;
     const scroller = scrollParent ?? document.scrollingElement ?? document.documentElement;
     const maxScrollTop = Math.max(0, (scroller?.scrollHeight ?? 0) - (scroller?.clientHeight ?? window.innerHeight));
     const currentTop = scrollParent ? scrollParent.scrollTop : window.scrollY;
     const atBottom = currentTop >= maxScrollTop - 20;
-    const atTop = currentTop <= 20;
-
-    if (!job.revealDirection) job.revealDirection = "down";
-    if (atBottom) job.revealDirection = "up";
-    else if (atTop) job.revealDirection = "down";
-
-    const delta = job.revealDirection === "down" ? stepBase : -stepBase;
 
     if (scrollParent) {
-      const nextTop = clamp(scrollParent.scrollTop + delta, 0, maxScrollTop);
-      scrollParent.scrollTop = nextTop;
+      if (atBottom) {
+        scrollParent.scrollTop = 0;
+      } else {
+        const nextTop = clamp(scrollParent.scrollTop + stepBase, 0, maxScrollTop);
+        scrollParent.scrollTop = nextTop;
+      }
     } else {
-      window.scrollTo(0, clamp(window.scrollY + delta, 0, maxScrollTop));
+      if (atBottom) {
+        window.scrollTo(0, 0);
+      } else {
+        window.scrollTo(0, clamp(window.scrollY + stepBase, 0, maxScrollTop));
+      }
     }
 
     await sleep(800);
@@ -827,12 +910,12 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     const afterIds = getVisibleGoodsIds();
     const hasNew = afterIds.some((id) => !beforeIds.includes(id) && !job.pageProcessedIds.has(id));
     if (hasNew) {
-      logLine(`当前页加载出更多商品：可见 ${beforeIds.length} -> ${afterIds.length}（向${job.revealDirection === "down" ? "下" : "上"}滚动）`);
+      logLine(`当前页加载出更多商品：可见 ${beforeIds.length} -> ${afterIds.length}（${atBottom ? "回到顶部后继续下滚" : "向下滚动"}）`);
       return true;
     }
-
-    // 本次方向没有发现新商品，下一次换方向继续探测
-    job.revealDirection = job.revealDirection === "down" ? "up" : "down";
+    if (atBottom) {
+      logLine("当前页已滚到底部，已回到顶部继续扫描");
+    }
     return false;
   }
 
@@ -1259,6 +1342,9 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
       // 逐商品处理（当前页）：动态扫描当前页未处理商品，不再依赖首次 DOM 快照
       if (!job.pageProcessedIds) job.pageProcessedIds = new Set();
       if (typeof job.noNewGoodsRounds !== "number") job.noNewGoodsRounds = 0;
+
+      // 每次开始处理当前页前，先把滚动条拉回顶部（该页面翻页后为异步加载）
+      await scrollListToTop();
 
       const pageSize = Number(settings.expectedPageSize ?? getCurrentPageSize() ?? 10);
       logLine(`开始扫描当前页商品（每页=${pageSize ?? "?"}，已处理=${job.pageProcessedIds.size}）`);
