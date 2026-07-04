@@ -108,6 +108,21 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
       #${PANEL_ID} .pdd-ga-bd{ padding: 12px; }
       #${PANEL_ID} .pdd-ga-row{ margin-bottom: 10px; }
       #${PANEL_ID} .pdd-ga-row label{ display:block; font-size:12px; color:#666; margin-bottom:6px; }
+      #${PANEL_ID} .pdd-ga-status{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 10px;
+        background: #f3f7ff;
+        color: #1b3a75;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      #${PANEL_ID} .pdd-ga-status-value{
+        color: #1677ff;
+        font-weight: 800;
+      }
       #${PANEL_ID} .pdd-ga-row-compact{
         display: flex;
         gap: 10px;
@@ -254,6 +269,14 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
               <option value="200">200</option>
             </select>
           </div>
+          <div class="pdd-ga-field pdd-ga-field-sm">
+            <label for="pdd-ga-scroll-speed">鼠标滚速</label>
+            <select id="pdd-ga-scroll-speed">
+              <option value="normal">普通</option>
+              <option value="medium" selected>中速</option>
+              <option value="fast">快速</option>
+            </select>
+          </div>
           <div class="pdd-ga-field">
             <label for="pdd-ga-save-delay">保存间隔[s]</label>
             <input id="pdd-ga-save-delay" type="number" min="0" step="1" value="2" />
@@ -269,10 +292,13 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
             <label><input type="checkbox" id="pdd-ga-skip-processed" />自动跳过已处理数据</label>
           </div>
         </div>
+        <div class="pdd-ga-row">
+          <div class="pdd-ga-status">当前处理 <span class="pdd-ga-status-value" id="pdd-ga-current-page">-/-页</span></div>
+        </div>
 
         <div class="pdd-ga-actions">
-          <button type="button" data-act="test">测试</button>
           <button type="button" data-act="start" data-variant="primary">开始处理</button>
+          <button type="button" data-act="pause">暂停</button>
           <button type="button" data-act="stop" data-variant="danger">停止</button>
           <button type="button" data-act="clear-log">清日志</button>
         </div>
@@ -285,8 +311,8 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
       const act = e?.target?.getAttribute?.("data-act");
       if (!act) return;
       if (act === "close") setPanelOpen(false);
-      if (act === "test") onTest();
       if (act === "start") onStart();
+      if (act === "pause") onPause();
       if (act === "stop") onStop();
       if (act === "clear-log") clearLog();
     });
@@ -294,12 +320,14 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     document.documentElement.appendChild(panel);
     enablePanelDrag();
     updateActionButtons();
+    updateCurrentPageIndicator();
   }
 
   function setPanelOpen(open) {
     ensurePanel();
     const panel = document.getElementById(PANEL_ID);
     panel.setAttribute("data-open", open ? "true" : "false");
+    if (open) updateCurrentPageIndicator();
   }
 
   function clamp(value, min, max) {
@@ -374,14 +402,27 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
   function updateActionButtons() {
     ensurePanel();
     const startBtn = document.querySelector(`#${PANEL_ID} [data-act="start"]`);
+    const pauseBtn = document.querySelector(`#${PANEL_ID} [data-act="pause"]`);
     const stopBtn = document.querySelector(`#${PANEL_ID} [data-act="stop"]`);
     if (startBtn) {
-      startBtn.textContent = runState === "running" ? "处理中..." : "开始处理";
+      startBtn.textContent = runState === "running" ? "处理中..." : runState === "paused" ? "继续处理" : "开始处理";
       startBtn.disabled = runState === "running";
     }
-    if (stopBtn) {
-      stopBtn.disabled = runState !== "running";
+    if (pauseBtn) {
+      pauseBtn.disabled = runState !== "running";
     }
+    if (stopBtn) {
+      stopBtn.disabled = runState !== "running" && runState !== "paused";
+    }
+  }
+
+  function updateCurrentPageIndicator(pageNum = getActivePageNumber(), totalPageNum = getTotalPageNumber()) {
+    ensurePanel();
+    const el = document.getElementById("pdd-ga-current-page");
+    if (!el) return;
+    const current = Number.isFinite(pageNum) ? String(pageNum) : "-";
+    const total = Number.isFinite(totalPageNum) ? String(totalPageNum) : "-";
+    el.textContent = `${current}/${total}页`;
   }
 
   function findButtonByText(text) {
@@ -424,12 +465,14 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     const continuous = document.getElementById("pdd-ga-continuous")?.checked ?? false;
     const skipProcessed = document.getElementById("pdd-ga-skip-processed")?.checked ?? false;
     const pageSize = Number(document.getElementById("pdd-ga-page-size")?.value ?? 10);
+    const scrollSpeedMode = document.getElementById("pdd-ga-scroll-speed")?.value ?? "medium";
     const saveDelaySec = Number(document.getElementById("pdd-ga-save-delay")?.value ?? 2);
     const delay = Number(document.getElementById("pdd-ga-delay")?.value ?? 0);
     const settings = await setSettings({
       continuousProcess: continuous,
       skipProcessedData: skipProcessed,
       expectedPageSize: Number.isFinite(pageSize) ? pageSize : 10,
+      scrollSpeedMode,
       saveDelaySec: Number.isFinite(saveDelaySec) ? saveDelaySec : 2,
       perItemDelayMs: Number.isFinite(delay) ? delay : 0,
       lastActiveAt: Date.now()
@@ -442,6 +485,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     const settings = await getSettings();
     const continuous = !!settings?.continuousProcess;
     const pageSize = Number(settings?.expectedPageSize ?? 10);
+    const scrollSpeedMode = settings?.scrollSpeedMode ?? "medium";
     const saveDelaySec = Number(settings?.saveDelaySec ?? settings?.perPageDelaySec ?? 2);
     const delay = Number(settings?.perItemDelayMs ?? 800);
     const skipProcessed = !!settings?.skipProcessedData;
@@ -452,6 +496,8 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     if (spEl) spEl.checked = skipProcessed;
     const sEl = document.getElementById("pdd-ga-page-size");
     if (sEl) sEl.value = String(Number.isFinite(pageSize) ? pageSize : 10);
+    const ssEl = document.getElementById("pdd-ga-scroll-speed");
+    if (ssEl) ssEl.value = String(scrollSpeedMode);
     const pEl = document.getElementById("pdd-ga-save-delay");
     if (pEl) pEl.value = String(Number.isFinite(saveDelaySec) ? saveDelaySec : 2);
     const dEl = document.getElementById("pdd-ga-delay");
@@ -489,6 +535,17 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     return Number.isFinite(n) ? n : null;
   }
 
+  function getTotalPageNumber() {
+    const ul = document.querySelector('ul[data-testid="beast-core-pagination"]');
+    if (!ul) return null;
+    const lis = Array.from(ul.querySelectorAll("li"));
+    const nums = lis
+      .map((li) => Number.parseInt((li?.innerText ?? "").trim(), 10))
+      .filter((n) => Number.isFinite(n));
+    if (!nums.length) return null;
+    return Math.max(...nums);
+  }
+
   async function tryGoNextPage() {
     const next = getNextPageButton();
     if (!next) {
@@ -514,6 +571,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
         logLine(`翻页完成：${beforePage ?? "?"} -> ${afterPage ?? "?"}`);
         // 翻页后先把滚动条拉回顶部，避免列表异步渲染导致只加载到中间/底部
         await scrollListToTop();
+        updateCurrentPageIndicator(afterPage);
         return true;
       }
     }
@@ -611,6 +669,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     "常规面料款",
     "甄选材料",
     "升级专柜版",
+    "至臻面料",
     "臻选材料",
     "精选材料",
     "面料款",
@@ -630,6 +689,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     "精选款",
     "专业版",
     "旗舰版",
+    "普通版",
     "豪华版",
     "升级版",
     "升级款",
@@ -877,45 +937,66 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     await sleep(300);
   }
 
+  async function sleepWhileRunning(ms) {
+    let waited = 0;
+    while (waited < ms) {
+      if (runState !== "running") return false;
+      const step = Math.min(120, ms - waited);
+      await sleep(step);
+      waited += step;
+    }
+    return runState === "running";
+  }
+
   async function revealMoreGoodsInCurrentPage(job) {
+    if (runState !== "running") return false;
     const beforeIds = getVisibleGoodsIds();
     const lastStartRow = getGroupStartRows().slice(-1)[0] ?? null;
     if (!lastStartRow) return false;
 
     const scrollParent = findScrollableAncestor(lastStartRow);
-    // 模拟鼠标滚轮：每次只向下滚一小段；到底后回到顶部，重新从上往下扫
-    const stepBase = scrollParent ? Math.max(120, Math.floor(scrollParent.clientHeight * 0.28)) : 220;
+    const speedMode = job?.settings?.scrollSpeedMode ?? "medium";
+    const speedMultiplier = speedMode === "normal" ? 0.75 : speedMode === "fast" ? 1.5 : 1;
+    // 更像人工滚轮：连续小步下滚；到底后回顶部，再从上往下扫
+    const stepBase = scrollParent
+      ? Math.max(Math.floor(210 * speedMultiplier), Math.floor(scrollParent.clientHeight * 0.36 * speedMultiplier))
+      : Math.floor(270 * speedMultiplier);
     const scroller = scrollParent ?? document.scrollingElement ?? document.documentElement;
     const maxScrollTop = Math.max(0, (scroller?.scrollHeight ?? 0) - (scroller?.clientHeight ?? window.innerHeight));
     const currentTop = scrollParent ? scrollParent.scrollTop : window.scrollY;
     const atBottom = currentTop >= maxScrollTop - 20;
 
-    if (scrollParent) {
-      if (atBottom) {
-        scrollParent.scrollTop = 0;
-      } else {
+    if (atBottom) {
+      if (scrollParent) scrollParent.scrollTop = 0;
+      else window.scrollTo(0, 0);
+      logLine("当前页已滚到底部，已回到顶部继续扫描");
+      const ok = await sleepWhileRunning(250);
+      if (!ok) return false;
+    }
+
+    // 连续小步下滚，模拟人工滚轮
+    const burstSteps = 5;
+    for (let i = 0; i < burstSteps; i++) {
+      if (runState !== "running") return false;
+
+      if (scrollParent) {
         const nextTop = clamp(scrollParent.scrollTop + stepBase, 0, maxScrollTop);
         scrollParent.scrollTop = nextTop;
-      }
-    } else {
-      if (atBottom) {
-        window.scrollTo(0, 0);
       } else {
         window.scrollTo(0, clamp(window.scrollY + stepBase, 0, maxScrollTop));
       }
+
+      const ok = await sleepWhileRunning(140);
+      if (!ok) return false;
+
+      const afterIds = getVisibleGoodsIds();
+      const hasNew = afterIds.some((id) => !beforeIds.includes(id) && !job.pageProcessedIds.has(id));
+      if (hasNew) {
+        logLine(`当前页加载出更多商品：可见 ${beforeIds.length} -> ${afterIds.length}（连续下滚触发）`);
+        return true;
+      }
     }
 
-    await sleep(800);
-
-    const afterIds = getVisibleGoodsIds();
-    const hasNew = afterIds.some((id) => !beforeIds.includes(id) && !job.pageProcessedIds.has(id));
-    if (hasNew) {
-      logLine(`当前页加载出更多商品：可见 ${beforeIds.length} -> ${afterIds.length}（${atBottom ? "回到顶部后继续下滚" : "向下滚动"}）`);
-      return true;
-    }
-    if (atBottom) {
-      logLine("当前页已滚到底部，已回到顶部继续扫描");
-    }
     return false;
   }
 
@@ -1147,6 +1228,17 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     return { startIndex, goodsId, rows: all.slice(startIndex, startIndex + span) };
   }
 
+  function isSkippableSpecialGroup(group) {
+    if (!group?.rows?.length) return false;
+    // 这类补差价商品通常只有 1 个规格、无展开功能，且文案固定，但商品 ID 每店不同
+    const text = normalizeText(group.rows.map((tr) => tr.innerText ?? "").join(" "));
+    const isSingleRow = group.rows.length === 1;
+    const hasSpecialName =
+      text.includes("补收差价专用商品") || text.includes("补差价专用商品") || text.includes("联系客服确认");
+    const hasDashCode = text.includes("商品编码：--") || text.includes("规格编码:--") || text.includes("规格编码：--");
+    return isSingleRow && (hasSpecialName || hasDashCode);
+  }
+
   function findStartIndexByGoodsId(goodsId) {
     if (!goodsId) return -1;
     const all = getAllTableRows();
@@ -1292,7 +1384,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
 
     if (specRows.length === 0) {
       logLine(`${label}：未找到规格行`);
-      return { processed: 0 };
+      return { processed: 0, modified: 0 };
     }
 
     const rowPlans = specRows.map((tr, index) => {
@@ -1307,12 +1399,13 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
 
     if (settings.skipProcessedData && rowPlans.every((row) => row.input && row.alreadyDone)) {
       logLine(`${label}：检测到所有规格简称都已填写，自动跳过`);
-      return { processed: 0, skipped: rowPlans.length };
+      return { processed: 0, skipped: rowPlans.length, modified: 0 };
     }
 
     let processed = 0;
+    let modified = 0;
     for (let i = 0; i < rowPlans.length; i++) {
-      if (runState !== "running") return { processed };
+      if (runState !== "running") return { processed, modified };
 
       const row = rowPlans[i];
       const { specName, shortName, input } = row;
@@ -1326,13 +1419,14 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
       } else {
         setInputValue(input, shortName);
         logLine(`${label} 规格第 ${i + 1} 行：${specName} -> ${shortName}`);
+        modified += 1;
       }
 
       processed += 1;
       await sleep(settings.perItemDelayMs);
     }
 
-    return { processed };
+    return { processed, modified };
   }
 
   async function processSpecRows(job) {
@@ -1345,6 +1439,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
 
       // 每次开始处理当前页前，先把滚动条拉回顶部（该页面翻页后为异步加载）
       await scrollListToTop();
+      updateCurrentPageIndicator();
 
       const pageSize = Number(settings.expectedPageSize ?? getCurrentPageSize() ?? 10);
       logLine(`开始扫描当前页商品（每页=${pageSize ?? "?"}，已处理=${job.pageProcessedIds.size}）`);
@@ -1402,14 +1497,24 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
         }
 
         let group = getGroupRowsByStartIndex(startIndex);
+        if (isSkippableSpecialGroup(group)) {
+          logLine(`商品(ID=${targetGoodsId})：识别为补差价/特殊单规格商品，自动跳过并计为完成`);
+          job.pageProcessedIds.add(targetGoodsId);
+          await sleep(150);
+          continue;
+        }
         group = await ensureExpandedForGroup(group);
         const result = await processSingleGroup(group, settings, `商品 ${job.pageProcessedIds.size + 1}`);
         job.processedCount += result.processed;
         if (runState !== "running") return;
 
-        // 新机制：每处理完一个商品就保存一次，并把已处理商品收起，减少页面开销
-        await saveCurrentPageChanges();
-        if (runState !== "running") return;
+        // 只有本商品组确实发生了修改，才点击保存，避免无修改时反复保存
+        if ((result?.modified ?? 0) > 0) {
+          await saveCurrentPageChanges();
+          if (runState !== "running") return;
+        } else {
+          logLine(`商品(ID=${targetGoodsId})：本轮无实际修改，跳过保存`);
+        }
         // 临时停用“处理后自动收起”，避免页面高度变化影响后续商品识别
         // await collapseGroupIfExpanded(group.goodsId);
         // if (runState !== "running") return;
@@ -1446,58 +1551,25 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     }
   }
 
-  async function onTest() {
-    const settings = await readPanelValues();
-    logLine(
-      `测试：URL=${location.pathname}；连续翻页=${settings.continuousProcess ? "是" : "否"}；跳过已处理=${settings.skipProcessedData ? "是" : "否"}；每页=${settings.expectedPageSize}；保存间隔=${settings.saveDelaySec}s；每条间隔=${settings.perItemDelayMs}ms`
-    );
-    chrome.runtime.sendMessage({ type: "PING" }, (resp) => {
-      if (chrome.runtime.lastError) {
-        logLine(`测试：PING 失败：${chrome.runtime.lastError.message}`);
-        return;
-      }
-      logLine(`测试：PING ok：${JSON.stringify(resp)}`);
-    });
-
-    const startRows = getGroupStartRows();
-    if (startRows.length === 0) {
-      logLine("测试：当前页未找到商品");
-      return;
-    }
-
-    runState = "running";
-    updateActionButtons();
-    await ensurePageSizeApplied(settings.expectedPageSize);
-    const firstGoodsId = getGoodsIdFromRow(startRows[0]);
-    const idx = findStartIndexByGoodsId(firstGoodsId);
-    if (idx < 0) {
-      logLine("测试：未定位到第一个商品");
-      runState = "idle";
-      updateActionButtons();
-      return;
-    }
-
-    let group = getGroupRowsByStartIndex(idx);
-    group = await ensureExpandedForGroup(group);
-    await processSingleGroup(group, settings, "第一个商品");
-    await saveCurrentPageChanges();
-    // 临时停用“处理后自动收起”，便于排查当前页商品识别是否受高度变化影响
-    // await collapseGroupIfExpanded(group.goodsId);
-    runState = "idle";
-    updateActionButtons();
-    currentJob = null;
-    logLine("测试完成");
-  }
-
   async function onStart() {
     if (runState === "running") {
       logLine("已在运行中");
       return;
     }
 
+    if (runState === "paused" && currentJob) {
+      runState = "running";
+      updateActionButtons();
+      logLine("继续处理：保留当前进度，从当前位置继续");
+      await processSpecRows(currentJob);
+      updateActionButtons();
+      return;
+    }
+
     const settings = await readPanelValues();
     runState = "running";
     updateActionButtons();
+    updateCurrentPageIndicator();
     await ensurePageSizeApplied(settings.expectedPageSize);
     currentJob = {
       startedAt: Date.now(),
@@ -1509,6 +1581,16 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     logLine("开始处理：提取“规格信息”首行 -> 写入“规格简称”");
     await processSpecRows(currentJob);
     updateActionButtons();
+  }
+
+  function onPause() {
+    if (runState !== "running") {
+      logLine("当前不在处理中，无法暂停");
+      return;
+    }
+    runState = "paused";
+    updateActionButtons();
+    logLine("已暂停自动处理与自动滚动，可手动滚动页面；点“继续处理”可接着执行");
   }
 
   function onStop() {
