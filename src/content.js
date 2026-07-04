@@ -21,6 +21,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
   let currentJob = null;
   const logBuffer = [];
   let logRenderPending = false;
+  let runtimeCustomFilterTerms = [];
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -123,6 +124,17 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
         color: #1677ff;
         font-weight: 800;
       }
+      #${PANEL_ID} .pdd-ga-status-row{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap: 10px;
+      }
+      #${PANEL_ID} .pdd-ga-status-side{
+        display:flex;
+        justify-content:flex-end;
+        flex: 1 1 auto;
+      }
       #${PANEL_ID} .pdd-ga-row-compact{
         display: flex;
         gap: 10px;
@@ -157,6 +169,61 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
         display: inline-flex;
         align-items:center;
         gap: 6px;
+      }
+      #${PANEL_ID} .pdd-ga-subactions button{
+        padding: 7px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(22,119,255,.22);
+        background: #f3f7ff;
+        color: #1677ff;
+        cursor: pointer;
+      }
+      #${PANEL_ID} .pdd-ga-advanced{
+        display:none;
+        margin-bottom: 10px;
+        border: 1px solid rgba(22,119,255,.12);
+        background: #f8fbff;
+        border-radius: 10px;
+        padding: 10px;
+      }
+      #${PANEL_ID} .pdd-ga-advanced[data-open="true"]{
+        display:block;
+      }
+      #${PANEL_ID} .pdd-ga-help{
+        font-size: 12px;
+        color: #666;
+        line-height: 1.5;
+        margin: 0 0 8px;
+      }
+      #${PANEL_ID} .pdd-ga-row textarea{
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border: 1px solid rgba(0,0,0,.12);
+        border-radius: 10px;
+        outline: none;
+        background: #fff;
+        resize: vertical;
+        min-height: 110px;
+        font: inherit;
+      }
+      #${PANEL_ID} .pdd-ga-advanced-actions{
+        display:flex;
+        justify-content:flex-end;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      #${PANEL_ID} .pdd-ga-advanced-actions button{
+        padding: 7px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(0,0,0,.12);
+        background: #fff;
+        cursor: pointer;
+      }
+      #${PANEL_ID} .pdd-ga-advanced-actions button[data-variant="primary"]{
+        background: #1677ff;
+        border-color: #1677ff;
+        color: #fff;
       }
       #${PANEL_ID} .pdd-ga-actions{
         display:flex;
@@ -293,7 +360,22 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
           </div>
         </div>
         <div class="pdd-ga-row">
-          <div class="pdd-ga-status">当前处理 <span class="pdd-ga-status-value" id="pdd-ga-current-page">-/-页</span></div>
+          <div class="pdd-ga-status-row">
+            <div class="pdd-ga-status">当前处理 <span class="pdd-ga-status-value" id="pdd-ga-current-page">-/-页</span></div>
+            <div class="pdd-ga-status-side pdd-ga-subactions">
+              <button type="button" data-act="toggle-custom-filter">自定义过滤词设置</button>
+            </div>
+          </div>
+        </div>
+        <div class="pdd-ga-advanced" id="pdd-ga-custom-filter-wrap" data-open="false">
+          <div class="pdd-ga-help">一行一个过滤词。少于 2 个字会被忽略；与颜色、鞋子属性、尺码等必要关键字冲突的内容会自动忽略。保存后会自动更新为实际生效的过滤词。</div>
+          <div class="pdd-ga-row">
+            <textarea id="pdd-ga-custom-filter" placeholder="例如：&#10;店长力荐&#10;直播爆卖&#10;活动专享"></textarea>
+          </div>
+          <div class="pdd-ga-advanced-actions">
+            <button type="button" data-act="cancel-custom-filter">取消</button>
+            <button type="button" data-act="save-custom-filter" data-variant="primary">保存设置</button>
+          </div>
         </div>
 
         <div class="pdd-ga-actions">
@@ -315,6 +397,9 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
       if (act === "pause") onPause();
       if (act === "stop") onStop();
       if (act === "clear-log") clearLog();
+      if (act === "toggle-custom-filter") toggleCustomFilterPanel();
+      if (act === "cancel-custom-filter") closeCustomFilterPanel();
+      if (act === "save-custom-filter") onSaveCustomFilter();
     });
 
     document.documentElement.appendChild(panel);
@@ -399,6 +484,37 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     scheduleLogRender();
   }
 
+  function getCustomFilterTextarea() {
+    return document.getElementById("pdd-ga-custom-filter");
+  }
+
+  function getCustomFilterWrap() {
+    return document.getElementById("pdd-ga-custom-filter-wrap");
+  }
+
+  function setCustomFilterPanelOpen(open) {
+    ensurePanel();
+    const wrap = getCustomFilterWrap();
+    if (!wrap) return;
+    wrap.setAttribute("data-open", open ? "true" : "false");
+  }
+
+  function toggleCustomFilterPanel() {
+    const wrap = getCustomFilterWrap();
+    const isOpen = wrap?.getAttribute("data-open") === "true";
+    setCustomFilterPanelOpen(!isOpen);
+  }
+
+  function closeCustomFilterPanel() {
+    setCustomFilterPanelOpen(false);
+  }
+
+  function setCustomFilterTextareaValue(list) {
+    const el = getCustomFilterTextarea();
+    if (!el) return;
+    el.value = Array.isArray(list) ? list.join("\n") : "";
+  }
+
   function updateActionButtons() {
     ensurePanel();
     const startBtn = document.querySelector(`#${PANEL_ID} [data-act="start"]`);
@@ -468,6 +584,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     const scrollSpeedMode = document.getElementById("pdd-ga-scroll-speed")?.value ?? "medium";
     const saveDelaySec = Number(document.getElementById("pdd-ga-save-delay")?.value ?? 2);
     const delay = Number(document.getElementById("pdd-ga-delay")?.value ?? 0);
+    const current = await getSettings();
     const settings = await setSettings({
       continuousProcess: continuous,
       skipProcessedData: skipProcessed,
@@ -475,6 +592,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
       scrollSpeedMode,
       saveDelaySec: Number.isFinite(saveDelaySec) ? saveDelaySec : 2,
       perItemDelayMs: Number.isFinite(delay) ? delay : 0,
+      customFilterTerms: Array.isArray(current?.customFilterTerms) ? current.customFilterTerms : [],
       lastActiveAt: Date.now()
     });
     return settings;
@@ -489,6 +607,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     const saveDelaySec = Number(settings?.saveDelaySec ?? settings?.perPageDelaySec ?? 2);
     const delay = Number(settings?.perItemDelayMs ?? 800);
     const skipProcessed = !!settings?.skipProcessedData;
+    const customFilterTerms = Array.isArray(settings?.customFilterTerms) ? settings.customFilterTerms : [];
 
     const cEl = document.getElementById("pdd-ga-continuous");
     if (cEl) cEl.checked = continuous;
@@ -502,6 +621,8 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     if (pEl) pEl.value = String(Number.isFinite(saveDelaySec) ? saveDelaySec : 2);
     const dEl = document.getElementById("pdd-ga-delay");
     if (dEl) dEl.value = String(Number.isFinite(delay) ? delay : 800);
+    setCustomFilterTextareaValue(customFilterTerms);
+    runtimeCustomFilterTerms = customFilterTerms;
   }
 
   function getNextPageButton() {
@@ -596,6 +717,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
   }
 
   const SHOE_ATTR_WORDS = ["网面", "皮面", "革面", "加绒", "加棉", "加厚"];
+  const SIZE_KEYWORDS = ["XS", "S", "M", "L", "XL", "XXL", "XXXL", "2XL", "3XL", "4XL", "5XL", "6XL", "均码", "内长", "码"];
 
   function normalizeBracketText(s) {
     return (
@@ -646,6 +768,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     "杏色",
     "金色"
   ];
+  const PROTECTED_FILTER_TERMS = [...KNOWN_COLORS, ...SHOE_ATTR_WORDS, ...SIZE_KEYWORDS];
 
   const PROMO_SUFFIX_TRASH = [
     "六一活动专属",
@@ -711,6 +834,31 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     "中大童"
   ];
 
+  function sanitizeCustomFilterTerms(rawTextOrList) {
+    const lines = Array.isArray(rawTextOrList) ? rawTextOrList : String(rawTextOrList ?? "").split(/\r?\n/);
+    const normalized = [];
+    for (const item of lines) {
+      const term = normalizeText(item).replace(/^[,，;；、\-\s]+|[,，;；、\-\s]+$/g, "");
+      if (!term) continue;
+      if (term.length < 2) continue;
+
+      const conflicts = PROTECTED_FILTER_TERMS.some((kw) => kw && (term.includes(kw) || kw.includes(term)));
+      if (conflicts) continue;
+      if (!normalized.includes(term)) normalized.push(term);
+    }
+    return normalized;
+  }
+
+  async function onSaveCustomFilter() {
+    const el = getCustomFilterTextarea();
+    const cleaned = sanitizeCustomFilterTerms(el?.value ?? "");
+    await setSettings({ customFilterTerms: cleaned });
+    setCustomFilterTextareaValue(cleaned);
+    runtimeCustomFilterTerms = cleaned;
+    closeCustomFilterPanel();
+    logLine(`已保存自定义过滤词 ${cleaned.length} 条`);
+  }
+
   /**
    * 输入示例："粉色网面 36" -> 输出："粉色，36码"
    * 尺码规则：
@@ -765,6 +913,12 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
 
     // 清理促销文案，但保留鞋款属性（如网面/皮面/加绒）
     let cleaned = colorPart;
+    // 自定义过滤词优先生效，避免被系统其它规则先改坏结构后无法正常匹配
+    const customTerms = Array.isArray(currentJob?.settings?.customFilterTerms) ? currentJob.settings.customFilterTerms : runtimeCustomFilterTerms;
+    for (const term of customTerms) {
+      const safe = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      cleaned = cleaned.replace(new RegExp(safe, "g"), "");
+    }
     // 清理类似 “-FS-” 这种前后带横杠的 2 字母标记
     // 注意：必须放在统一清理横杠之前，否则会被拆散成普通文本
     cleaned = cleaned.replace(/-[A-Za-z]{2}-/g, "");
@@ -772,6 +926,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     cleaned = cleaned.replace(/[-—–_ ]*\d{1,3}%?[\u4e00-\u9fa5]{0,4}选择/g, "");
     // 清理少量残留的百分比营销尾巴
     cleaned = cleaned.replace(/[-—–_ ]*\d{1,3}%.*$/g, "");
+
     cleaned = cleaned.replace(/[-—–_]+/g, " ");
     cleaned = normalizeText(cleaned);
 
@@ -813,6 +968,9 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
         if (!shortBase.includes(a)) shortBase += a;
       }
     }
+    // 最后一层兜底：把残留的分隔符和括号符号统一去掉
+    shortBase = shortBase.replace(/[\/|【】]/g, " ");
+    shortBase = normalizeText(shortBase);
     const isAlphaSize = /^(?:XS|S|M|L|XL|XXL|XXXL|XXXXL|2XL|3XL|4XL|5XL|6XL|均码)$/i.test(size);
     const shortName = size ? `${shortBase}，${size}${isAlphaSize ? "" : "码"}` : `${shortBase}`;
     return { color, size, shortName };
