@@ -1275,12 +1275,13 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     const root = getExpandKeyRoot(goodsId);
     if (!root || !isVisible(root)) return null;
     const direct =
+      root.querySelector('[data-testid="beast-core-box"] [data-testid="beast-core-icon-down"]') ??
+      root.querySelector('svg[data-testid="beast-core-icon-down"]') ??
       root.querySelector('a[data-testid="beast-core-button-link"]') ??
       root.querySelector("a") ??
       root.querySelector("button") ??
-      root.querySelector("span") ??
       root;
-    return findClickableAncestor(direct);
+    return findClickableAncestor(direct) ?? root;
   }
 
   function getGroupExpansionSnapshot(group) {
@@ -1429,7 +1430,13 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     // 关键修复：
     // 不能把父级/自身/span/svg 全部连续点击，否则第一下展开、第二下又收起，表现成“不稳定”
     // 改为逐个尝试，只要检测到已展开就立刻停止
+    const expandRoot = goodsId ? getExpandKeyRoot(goodsId) : null;
     const tryTargets = [
+      expandRoot,
+      expandRoot?.querySelector('[data-testid="beast-core-box"] [data-testid="beast-core-icon-down"]') ?? null,
+      expandRoot?.querySelector('svg[data-testid="beast-core-icon-down"]') ?? null,
+      expandRoot?.querySelector('a[data-testid="beast-core-button-link"]') ?? null,
+      expandRoot?.querySelector('[data-testid="beast-core-box"]') ?? null,
       findClickableAncestor(ctrl),
       ctrl,
       ctrl.querySelector?.("span") ?? null,
@@ -1440,7 +1447,7 @@ if (location.origin !== "https://mms.pinduoduo.com" || !location.pathname.starts
     logLine(`商品(ID=${goodsId || "-"})：准备展开规格（点击“${t}”）`);
     for (const target of orderedTargets) {
       safeClick(target);
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 12; i++) {
         await sleep(250);
         if (hasGroupExpanded(group, beforeSpan, beforeSpecRows)) {
           const idx = goodsId ? findStartIndexByGoodsId(goodsId) : group.startIndex;
